@@ -1,12 +1,14 @@
 import { NestFactory } from "@nestjs/core";
 import { ValidationPipe } from "@nestjs/common";
 import { AppModule } from "./app.module";
+import { setupStoresSwagger } from "./swagger";
 
-async function bootstrap() {
+export async function bootstrap() {
   const app = await NestFactory.create(AppModule);
 
   app.useGlobalPipes(new ValidationPipe());
   app.setGlobalPrefix("api");
+  setupStoresSwagger(app);
 
   await app.listen(3001);
   console.log("app is running on port 3001");
