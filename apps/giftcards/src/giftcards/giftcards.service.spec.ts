@@ -13,10 +13,16 @@ import { CreateGiftcardDto } from "./dto/create-giftcard.dto";
 import { SpendGiftcardDto } from "./dto/spend-giftcard.dto";
 import { giftcards } from "./entities/giftcard.schema";
 import { spendsLog } from "./entities/spends-log.schema";
+import {
+  StoreNotFoundError,
+  StoreServiceUnavailableError,
+  StoreValidationClient,
+} from "./store-validation.client";
 
 describe("GiftcardsService spending", () => {
   let database: DatabaseService;
   let service: GiftcardsService;
+  let storesClient: jest.Mocked<StoreValidationClient>;
 
   beforeEach(async () => {
     const databasePath = path.join(
@@ -26,7 +32,8 @@ describe("GiftcardsService spending", () => {
     process.env.DATABASE_URL = `file:${databasePath}`;
     database = new DatabaseService();
     await database.onModuleInit();
-    service = new GiftcardsService(database);
+    storesClient = { verifyStore: jest.fn().mockResolvedValue(undefined) };
+    service = new GiftcardsService(database, storesClient);
   });
 
   afterEach(() => {
@@ -75,6 +82,39 @@ describe("GiftcardsService spending", () => {
     } satisfies CreateGiftcardDto);
 
     expect(created).toMatchObject({ amount: 1000, currentAmount: 1000 });
+    expect(storesClient.verifyStore).toHaveBeenCalledWith("store-1");
+  });
+
+  it("rejects an unknown store without writing a giftcard", async () => {
+    storesClient.verifyStore.mockRejectedValue(new StoreNotFoundError());
+
+    await expect(
+      service.create({
+        amount: 1000,
+        description: "Gift",
+        storeId: "missing",
+        receriverEmail: "receiver@example.com",
+        expiresAt: "2026-10-01T00:00:00.000Z",
+      }),
+    ).rejects.toMatchObject({ status: 400 });
+    await expect(database.db.select().from(giftcards)).resolves.toHaveLength(0);
+  });
+
+  it("rejects an unavailable Stores service without writing a giftcard", async () => {
+    storesClient.verifyStore.mockRejectedValue(
+      new StoreServiceUnavailableError(),
+    );
+
+    await expect(
+      service.create({
+        amount: 1000,
+        description: "Gift",
+        storeId: "store-1",
+        receriverEmail: "receiver@example.com",
+        expiresAt: "2026-10-01T00:00:00.000Z",
+      }),
+    ).rejects.toMatchObject({ status: 503 });
+    await expect(database.db.select().from(giftcards)).resolves.toHaveLength(0);
   });
 
   it("includes the remaining balance in list and email-filtered responses", async () => {
