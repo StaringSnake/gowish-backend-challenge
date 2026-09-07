@@ -1,146 +1,87 @@
 # Backend Challenge - NestJS Monorepo
 
-A NestJS monorepo with two main microservices: **Stores** and **Giftcards**.
+This NestJS monorepo contains separate Giftcards and Stores services. They may
+share a SQLite database for this challenge, but store validation crosses the
+Stores HTTP service boundary.
 
-Even though they share the same underlying database for simplicity, they are two separate microservices.
+## Prerequisites and configuration
 
-## Technology Stack
+- Node.js v24 or higher and npm.
+- Install dependencies with `npm install`.
+- `DATABASE_URL` selects the libSQL/SQLite database (default:
+  `file:./data/app.db`).
+- `STORES_SERVICE_URL` is optional and defaults to `http://localhost:3001`.
+  Giftcards uses it to validate stores through `GET /api/stores/:id`.
 
-- **NestJS** - Node.js framework
-- **Drizzle ORM** - TypeScript ORM for database operations
-- **SQLite** - Database (via libsql)
-- **class-validator** - Validation
-- **class-transformer** - Transformation
-- **TypeScript** - Programming language
+Run both services with `npm run start:dev`; Giftcards listens on port 3000 and
+Stores on port 3001. Individual commands are `npm run start:dev:giftcards` and
+`npm run start:dev:stores`.
 
-## Project Structure
+## API
 
-```
-backend-challenge/
-├── apps/
-│   ├── giftcards/                 # Giftcards application
-│   │   ├── src/
-│   │   │   ├── app.module.ts
-│   │   │   ├── giftcards/
-│   │   │   │   ├── dto/
-│   │   │   │   ├── entities/
-│   │   │   │   ├── giftcards.controller.ts
-│   │   │   │   ├── giftcards.service.ts
-│   │   │   │   ├── giftcards.module.ts
-│   │   │   │   └── index.ts
-│   │   │   └── main.ts
-│   │   └── tsconfig.app.json
-│   └── stores/                    # Stores application
-│       ├── src/
-│       │   ├── app.module.ts
-│       │   ├── stores/
-│       │   │   ├── dto/
-│       │   │   ├── entities/
-│       │   │   ├── stores.controller.ts
-│       │   │   ├── stores.service.ts
-│       │   │   ├── stores.module.ts
-│       │   │   └── index.ts
-│       │   └── main.ts
-│       └── tsconfig.app.json
-├── libs/
-│   └── database/
-│       ├── src/
-│       │   ├── database.service.ts
-│       │   └── index.ts
-│       └── tsconfig.lib.json
-├── nest-cli.json
-├── package.json
-├── tsconfig.json
-└── README.md
-```
+All routes use the `/api` prefix. Monetary amounts are positive safe integer
+cents, not decimal currency units. Giftcard responses include the computed
+`currentAmount` (issued amount minus recorded spends).
 
-## Features
+### Giftcards (`http://localhost:3000`)
 
-### Giftcards App
-- Create, read, update, and delete giftcards
-- Giftcard entity with amount, description, expiration, store, and receiver fields
-- REST API endpoints at `/api/giftcards`
-- Runs on port 3000
+- `GET /api/giftcards?page=1&limit=20&userEmail=...` returns newest first with
+  deterministic `createdAt`/`id` ordering. `page` defaults to 1, `limit` to 20,
+  and `limit` is capped at 100; `userEmail` is optional. The response is:
+  ```json
+  {
+    "data": [
+      { "id": 1, "amount": 5000, "currentAmount": 3500, "storeId": "store-1" }
+    ],
+    "meta": { "total": 1, "page": 1, "limit": 20, "totalPages": 1 }
+  }
+  ```
+- `POST /api/giftcards` creates a giftcard. Its `storeId` is checked through
+  Stores before writing: an unknown store returns 400 and an unavailable or
+  invalid upstream returns 503; neither writes a giftcard.
+- `GET /api/giftcards/:id` returns one giftcard, including `currentAmount`.
+- `POST /api/giftcards/:id/spend` accepts `{ "amount": 1500 }` (positive
+  integer cents). It returns the updated giftcard. Missing cards return 404;
+  invalid amounts, expired cards, and spends over the current balance return
+  400, and rejected spends are not logged.
+- `GET /api/giftcards/summary` returns `totalExpiredCards`,
+  `totalActiveCards`, and `byStore` entries with `totalExpiredCards`,
+  `totalActiveCards`, and `totalAmountCents` (the remaining total balance for
+  that store, after spends).
+- `DELETE /api/giftcards/:id` deletes a giftcard.
 
-### Stores App
-- Create, read, update, and delete stores
-- Store entity with id, name, country code, address, and timestamps
-- Full CRUD operations with validation
-- REST API endpoints at `/api/stores`
-- Runs on port 3001
+### Stores (`http://localhost:3001`)
 
-## Prerequisites
+Stores provide CRUD endpoints: `GET /api/stores`, `GET /api/stores/:id`,
+`POST /api/stores`, `PATCH /api/stores/:id`, and `DELETE /api/stores/:id`.
 
-- Node.js (v24 or higher) - check the .nvmrc file for the recommended version
-- npm
+## Database
 
-## Installation
+Drizzle ORM uses SQLite/libSQL. The schema includes `giftcards`, `stores`, and
+`spendsLog`; giftcard and spend amounts are positive integer cents, and spend
+records cascade when their giftcard is deleted. On startup, the service creates
+the schema and can convert the legacy giftcard `REAL` amount column to cents
+when the existing data is valid. This is startup schema initialization and a
+limited conversion, not a full migration framework; production schema changes
+still require an explicit migration process.
 
-1. Install dependencies:
-```bash
-npm install
-```
+## Testing
 
-2. (Optional) Set up your database configuration by creating a `.env` file:
-```bash
-DATABASE_URL=file:./data/app.db
-NODE_ENV=development
-```
-
-## Running the Application
+Meaningful Jest tests cover critical paths, but the suite is not exhaustive.
 
 ```bash
-# Development mode - Run both apps in parallel
-npm run start:dev
-
-# Development mode - Run individual apps
-npm run start:dev:giftcards
-npm run start:dev:stores
-
-```
-
-When running both apps in parallel:
-- The giftcards application will be available at `http://localhost:3000`
-- The stores application will be available at `http://localhost:3001`
-
-## API Endpoints
-
-### Giftcards (Port 3000)
-- `GET /api/giftcards` - Get all giftcards (optional ?userEmail query)
-- `GET /api/giftcards/:id` - Get giftcard by ID
-- `POST /api/giftcards` - Create new giftcard
-- `DELETE /api/giftcards/:id` - Delete giftcard
-
-### Stores (Port 3001)
-- `GET /api/stores` - Get all stores
-- `GET /api/stores/:id` - Get store by ID
-- `POST /api/stores` - Create new store
-- `PATCH /api/stores/:id` - Update store
-- `DELETE /api/stores/:id` - Delete store
-
-
-## Development
-
-### Testing
-The tests are set up to run with Jest. But currently there are no meaningful tests implemented.
-Feel free to add tests if you want to.
-
-```bash
-# Run tests
+# Full Jest suite
 npm test
 
+# Live two-service integration suite
+npx jest apps/giftcards/src/giftcards/live.integration.spec.ts --runInBand
 ```
 
-## Database Schema
-
-The application uses Drizzle ORM with SQLite to simplify the database operations. The schema includes:
-
-- **giftcards** table: id, amount, description, expiresAt, storeId, receriverEmail, createdAt, updatedAt
-- **stores** table: id (UUID), name, countryCode, address, createdAt, updatedAt
-
-## Database Operations
-
-currently there is no migration system. You can see in the database.service.ts how the default tables are created.
+The live integration test boots both Nest services on ephemeral ports with a
+shared temporary SQLite database. It covers a valid giftcard/spend journey,
+unknown-store rejection without a write, and Stores-service unavailability
+without a write. Build/typecheck and formatting checks are also part of the
+repository verification workflow.
 
 # The challenge
 
@@ -149,15 +90,18 @@ currently there is no migration system. You can see in the database.service.ts h
 - allow yourself to get used to the codebase and the project structure.
 - read this README.md file carefully.
 - do not spend too much time on the challenge. We suggest ~3 hours.
-- it's ok if you don't finish all the tasks. We care more about your thought process, your approach and your code.
+- it's ok if you don't finish all the tasks. We care more about your thought
+  process, your approach and your code.
 - please let us know if you have any questions, we're here to help.
 - feel free to do/add "bonus" tasks if you want to. Of course do not exceed the ~3 hours.
-- there is a testing setup, but currently there are no meaningful tests implemented. Feel free to add tests if you want to or need to.
+- there is a testing setup, but currently there are no meaningful tests
+  implemented. Feel free to add tests if you want to or need to.
 
 ## Task 1
 
 - Add pagination to the giftcards app.
-Currently, the `GET /api/giftcards` endpoint returns all giftcards:
+  Currently, the `GET /api/giftcards` endpoint returns all giftcards:
+
 ```
 [
     {
@@ -194,7 +138,8 @@ Currently, the `GET /api/giftcards` endpoint returns all giftcards:
 ]
 ```
 
-Please refactor the endpoint to support pagination. You're free to choose the pagination strategy as well as the query parameters and response format.
+Please refactor the endpoint to support pagination. You're free to choose the
+pagination strategy as well as the query parameters and response format.
 
 ## task 2
 
@@ -202,7 +147,8 @@ Please refactor the endpoint to support pagination. You're free to choose the pa
 
 Currently, it is possible to create a giftcard with a store id that does not exist.
 
-To avoid this, it is good to validate if the store id exists in the Stores service before creating a giftcard.
+To avoid this, it is good to validate if the store id exists in the Stores
+service before creating a giftcard.
 
 ## task 3
 
@@ -211,6 +157,7 @@ There is a new business requirement: Users should be able to spend a giftcard pa
 ### 3.a\) Add a new entity: SpendsLog.
 
 This entity should have the following fields:
+
 - id
 - giftcardId
 - amount
@@ -218,7 +165,7 @@ This entity should have the following fields:
 
 The SpendsLog entity should be used to log all the spends on a giftcard.
 
-### 3.b\)  Add a new endpoint to the giftcards app to register a spend on a giftcard.
+### 3.b\) Add a new endpoint to the giftcards app to register a spend on a giftcard.
 
 The endpoint should be at `/api/giftcards/:id/spend`
 
@@ -240,7 +187,8 @@ The endpoint should be at `/api/giftcards/summary`
 
 The endpoint should return a summary of the giftcards.
 
-The summary should include the total of expired giftcards, the total of active giftcards, and the following breakdown by store:
+The summary should include the total of expired giftcards, the total of active
+giftcards, and the following breakdown by store:
 
 - total amount
 - total of expired giftcards
@@ -250,20 +198,19 @@ example response:
 
 ```json
 {
-    "totalExpiredCards": 10,
-    "totalActiveCards": 90,
-    "byStore": {
-        "store1": {
-            "totalAmountCents": 330050,
-            "totalExpiredCards": 2,
-            "totalActiveCards": 50
-        },
-        "store2": {
-            "totalAmountCents": 200050,
-            "totalExpiredCards": 8,
-            "totalActiveCards": 40
-        }
+  "totalExpiredCards": 10,
+  "totalActiveCards": 90,
+  "byStore": {
+    "store1": {
+      "totalAmountCents": 330050,
+      "totalExpiredCards": 2,
+      "totalActiveCards": 50
+    },
+    "store2": {
+      "totalAmountCents": 200050,
+      "totalExpiredCards": 8,
+      "totalActiveCards": 40
     }
+  }
 }
 ```
-

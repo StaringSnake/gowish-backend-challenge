@@ -13,7 +13,7 @@
     "build": "nest build",
     "format": "prettier --write \"apps/**/*.ts\" \"libs/**/*.ts\"",
     "start": "nest start",
-    "start:dev": "concurrently -c \"cyan.bold,red.bold\" \"npm run start:dev:*\"",
+    "start:dev": "concurrently -c \"cyan.bold,red.bold\" \"npm run start:dev:giftcards\" \"npm run start:dev:stores\"",
     "start:dev:giftcards": "nest start giftcards --watch",
     "start:dev:stores": "nest start stores --watch",
     "test": "jest"
@@ -73,6 +73,9 @@
     "moduleNameMapper": {
       "^@app/database(|/.*)$": "<rootDir>/libs/database/src/$1"
     },
-    "moduleDirectories": ["node_modules", "<rootDir>"]
+    "moduleDirectories": [
+      "node_modules",
+      "<rootDir>"
+    ]
   }
 }
