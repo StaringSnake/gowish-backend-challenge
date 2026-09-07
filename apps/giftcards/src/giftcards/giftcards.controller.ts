@@ -28,6 +28,11 @@ export class GiftcardsController {
     return this.giftcardsService.findAll(query);
   }
 
+  @Get("summary")
+  summary() {
+    return this.giftcardsService.summary();
+  }
+
   @Get(":id")
   findOne(@Param("id", ParseIntPipe) id: number) {
     return this.giftcardsService.findOne(id);
