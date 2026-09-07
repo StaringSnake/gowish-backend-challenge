@@ -11,6 +11,7 @@ import { DatabaseService } from "@app/database";
 import { giftcards } from "./entities/giftcard.schema";
 import { Giftcard } from "./entities/giftcard.entity";
 import { CreateGiftcardDto } from "./dto/create-giftcard.dto";
+import { ListGiftcardsDto } from "./dto/list-giftcards.dto";
 import { spendsLog } from "./entities/spends-log.schema";
 import {
   StoreNotFoundError,
@@ -20,6 +21,10 @@ import {
 } from "./store-validation.client";
 
 export type GiftcardResponse = Giftcard & { currentAmount: number };
+export type GiftcardListResponse = {
+  data: GiftcardResponse[];
+  meta: { total: number; page: number; limit: number; totalPages: number };
+};
 
 const giftcardFields = {
   id: giftcards.id,
@@ -75,12 +80,41 @@ export class GiftcardsService {
     return this.findOne(createdGiftcard.id);
   }
 
-  async findAll(): Promise<GiftcardResponse[]> {
-    return this.databaseService.db
-      .select({
-        ...giftcardFields,
-      })
-      .from(giftcards);
+  async findAll(
+    query: ListGiftcardsDto = new ListGiftcardsDto(),
+  ): Promise<GiftcardListResponse> {
+    const filter = query.userEmail
+      ? eq(giftcards.receriverEmail, query.userEmail)
+      : undefined;
+    const offset = (query.page - 1) * query.limit;
+
+    return this.databaseService.db.transaction(async (tx) => {
+      const rows = await tx
+        .select(giftcardFields)
+        .from(giftcards)
+        .where(filter)
+        .orderBy(
+          sql`(datetime(${giftcards.createdAt}) IS NULL) ASC`,
+          sql`datetime(${giftcards.createdAt}) DESC`,
+          desc(giftcards.id),
+        )
+        .limit(query.limit)
+        .offset(offset);
+      const [{ total }] = await tx
+        .select({ total: sql<number>`count(*)` })
+        .from(giftcards)
+        .where(filter);
+
+      return {
+        data: rows,
+        meta: {
+          total,
+          page: query.page,
+          limit: query.limit,
+          totalPages: Math.ceil(total / query.limit),
+        },
+      };
+    });
   }
 
   async findOne(id: number): Promise<GiftcardResponse> {
@@ -93,16 +127,6 @@ export class GiftcardsService {
       throw new NotFoundException(`Giftcard with ID ${id} not found`);
     }
     return giftcard;
-  }
-
-  async findByUserEmail(userEmail: string): Promise<GiftcardResponse[]> {
-    return this.databaseService.db
-      .select({
-        ...giftcardFields,
-      })
-      .from(giftcards)
-      .where(eq(giftcards.receriverEmail, userEmail))
-      .orderBy(desc(giftcards.createdAt), desc(giftcards.id));
   }
 
   async spend(id: number, amount: number): Promise<GiftcardResponse> {

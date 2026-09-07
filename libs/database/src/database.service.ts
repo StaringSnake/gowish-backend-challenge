@@ -128,6 +128,24 @@ export class DatabaseService implements OnModuleInit {
         ON spendsLog(giftcardId);
       `);
 
+      await this.sqlite.execute(`
+        CREATE INDEX IF NOT EXISTS giftcards_createdAt_normalized_id_idx
+        ON giftcards (
+          datetime(createdAt) IS NULL ASC,
+          datetime(createdAt) DESC,
+          id DESC
+        );
+      `);
+      await this.sqlite.execute(`
+        CREATE INDEX IF NOT EXISTS giftcards_email_createdAt_normalized_id_idx
+        ON giftcards (
+          receriverEmail,
+          datetime(createdAt) IS NULL ASC,
+          datetime(createdAt) DESC,
+          id DESC
+        );
+      `);
+
       await this.assertIntegerSchemaIntegrity();
 
       await this.sqlite.execute("COMMIT;");

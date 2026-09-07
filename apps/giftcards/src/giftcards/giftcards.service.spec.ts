@@ -6,6 +6,7 @@ import {
 import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
+import { sql } from "drizzle-orm";
 
 import { DatabaseService } from "@app/database";
 import { GiftcardsService } from "./giftcards.service";
@@ -44,6 +45,7 @@ describe("GiftcardsService spending", () => {
   async function createGiftcard(
     amount: number,
     expiresAt: string | null = null,
+    createdAt?: string,
   ): Promise<number> {
     const [giftcard] = await database.db
       .insert(giftcards)
@@ -53,6 +55,7 @@ describe("GiftcardsService spending", () => {
         storeId: "store-1",
         receriverEmail: "receiver@example.com",
         expiresAt,
+        ...(createdAt ? { createdAt, updatedAt: createdAt } : {}),
       })
       .returning({ id: giftcards.id });
     return giftcard.id;
@@ -117,16 +120,125 @@ describe("GiftcardsService spending", () => {
     await expect(database.db.select().from(giftcards)).resolves.toHaveLength(0);
   });
 
-  it("includes the remaining balance in list and email-filtered responses", async () => {
+  it("includes the remaining balance in paginated list responses", async () => {
     const id = await createGiftcard(1000);
     await service.spend(id, 250);
 
-    await expect(service.findAll()).resolves.toEqual([
-      expect.objectContaining({ id, currentAmount: 750 }),
-    ]);
+    await expect(service.findAll()).resolves.toEqual({
+      data: [expect.objectContaining({ id, currentAmount: 750 })],
+      meta: { total: 1, page: 1, limit: 20, totalPages: 1 },
+    });
     await expect(
-      service.findByUserEmail("receiver@example.com"),
-    ).resolves.toEqual([expect.objectContaining({ id, currentAmount: 750 })]);
+      service.findAll({
+        userEmail: "receiver@example.com",
+        page: 1,
+        limit: 20,
+      }),
+    ).resolves.toEqual({
+      data: [expect.objectContaining({ id, currentAmount: 750 })],
+      meta: { total: 1, page: 1, limit: 20, totalPages: 1 },
+    });
+  });
+
+  it("filters before pagination and orders newest cards first", async () => {
+    const firstId = await createGiftcard(
+      1000,
+      null,
+      "2026-09-07T00:00:00.000Z",
+    );
+    const otherId = await database.db
+      .insert(giftcards)
+      .values({
+        amount: 2000,
+        description: "Other",
+        storeId: "store-1",
+        receriverEmail: "other@example.com",
+        createdAt: "2026-09-07 23:00:00",
+        updatedAt: "2026-09-07 23:00:00",
+      })
+      .returning({ id: giftcards.id })
+      .then(([giftcard]) => giftcard.id);
+    const newestId = await createGiftcard(
+      3000,
+      null,
+      "2026-09-07T23:00:00.000Z",
+    );
+
+    await expect(service.findAll({ page: 1, limit: 1 })).resolves.toMatchObject(
+      {
+        data: [expect.objectContaining({ id: newestId })],
+        meta: { total: 3, totalPages: 3 },
+      },
+    );
+    await expect(
+      service.findAll({ userEmail: "receiver@example.com", page: 1, limit: 1 }),
+    ).resolves.toMatchObject({
+      data: [expect.objectContaining({ id: newestId })],
+      meta: { total: 2, totalPages: 2 },
+    });
+    expect(firstId).not.toBe(otherId);
+  });
+
+  it("normalizes mixed timestamp formats and uses id descending for equal times", async () => {
+    const olderId = await createGiftcard(1000, null, "2026-09-07 23:00:00");
+    const equalTimestampId = await createGiftcard(
+      2000,
+      null,
+      "2026-09-07T23:00:00.000Z",
+    );
+
+    await expect(service.findAll({ page: 1, limit: 2 })).resolves.toMatchObject(
+      {
+        data: [
+          expect.objectContaining({ id: equalTimestampId }),
+          expect.objectContaining({ id: olderId }),
+        ],
+      },
+    );
+  });
+
+  function planDetails(plan: unknown[]): string[] {
+    return plan.flatMap((row) =>
+      typeof row === "object" && row !== null && "detail" in row
+        ? [String(row.detail)]
+        : [],
+    );
+  }
+
+  it("uses the filtered normalized-order index without a temp sort", async () => {
+    const plan = await database.getDb()
+      .all(sql`EXPLAIN QUERY PLAN SELECT id FROM giftcards
+        WHERE receriverEmail = ${"receiver@example.com"}
+        ORDER BY (datetime(createdAt) IS NULL) ASC,
+          datetime(createdAt) DESC, id DESC LIMIT 1`);
+    const details = planDetails(plan);
+
+    expect(details.join(" ")).toContain(
+      "giftcards_email_createdAt_normalized_id_idx",
+    );
+    expect(details.join(" ")).not.toContain("USE TEMP B-TREE FOR ORDER BY");
+  });
+
+  it("uses the unfiltered normalized-order index without a temp sort", async () => {
+    const plan = await database.getDb()
+      .all(sql`EXPLAIN QUERY PLAN SELECT id FROM giftcards
+        ORDER BY (datetime(createdAt) IS NULL) ASC,
+          datetime(createdAt) DESC, id DESC LIMIT 1`);
+    const details = planDetails(plan);
+
+    expect(details.join(" ")).toContain(
+      "giftcards_createdAt_normalized_id_idx",
+    );
+    expect(details.join(" ")).not.toContain("USE TEMP B-TREE FOR ORDER BY");
+  });
+
+  it("returns empty data for an out-of-range page with accurate metadata", async () => {
+    await createGiftcard(1000);
+
+    await expect(service.findAll({ page: 2, limit: 1 })).resolves.toEqual({
+      data: [],
+      meta: { total: 1, page: 2, limit: 1, totalPages: 1 },
+    });
   });
 
   it("rejects an overspend without creating a log", async () => {
