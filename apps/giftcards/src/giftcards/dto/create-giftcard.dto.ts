@@ -6,7 +6,9 @@ import {
   IsInt,
   IsDateString,
   Max,
+  MaxLength,
 } from "class-validator";
+import { MAX_STORE_ID_LENGTH } from "../giftcards.constants";
 
 export class CreateGiftcardDto {
   @IsNumber()
@@ -22,6 +24,7 @@ export class CreateGiftcardDto {
   expiresAt: string;
 
   @IsString()
+  @MaxLength(MAX_STORE_ID_LENGTH)
   storeId: string;
 
   @IsString()

@@ -3,6 +3,7 @@ import { GiftcardsModule } from "./giftcards.module";
 import { GiftcardsController } from "./giftcards.controller";
 import { GiftcardsService } from "./giftcards.service";
 import { DatabaseModule, DatabaseService } from "@app/database";
+import { STORES_CLIENT } from "./store-validation.client";
 
 describe("GiftcardsModule", () => {
   let module: TestingModule;
@@ -24,6 +25,8 @@ describe("GiftcardsModule", () => {
     })
       .overrideProvider(DatabaseService)
       .useValue(mockDatabaseService)
+      .overrideProvider(STORES_CLIENT)
+      .useValue({ verifyStore: jest.fn() })
       .compile();
   });
 

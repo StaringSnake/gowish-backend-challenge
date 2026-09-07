@@ -3,6 +3,8 @@ import {
   NotFoundException,
   BadRequestException,
   InternalServerErrorException,
+  ServiceUnavailableException,
+  Inject,
 } from "@nestjs/common";
 import { and, desc, eq, sql } from "drizzle-orm";
 import { DatabaseService } from "@app/database";
@@ -10,6 +12,12 @@ import { giftcards } from "./entities/giftcard.schema";
 import { Giftcard } from "./entities/giftcard.entity";
 import { CreateGiftcardDto } from "./dto/create-giftcard.dto";
 import { spendsLog } from "./entities/spends-log.schema";
+import {
+  StoreNotFoundError,
+  StoreServiceUnavailableError,
+  STORES_CLIENT,
+  StoreValidationClient,
+} from "./store-validation.client";
 
 export type GiftcardResponse = Giftcard & { currentAmount: number };
 
@@ -32,11 +40,27 @@ const giftcardFields = {
 
 @Injectable()
 export class GiftcardsService {
-  constructor(private readonly databaseService: DatabaseService) {}
+  constructor(
+    private readonly databaseService: DatabaseService,
+    @Inject(STORES_CLIENT)
+    private readonly storesClient: StoreValidationClient,
+  ) {}
 
   async create(
     createGiftcardDto: CreateGiftcardDto,
   ): Promise<GiftcardResponse> {
+    try {
+      await this.storesClient.verifyStore(createGiftcardDto.storeId);
+    } catch (error) {
+      if (error instanceof StoreNotFoundError) {
+        throw new BadRequestException("storeId references an unknown store");
+      }
+      if (error instanceof StoreServiceUnavailableError) {
+        throw new ServiceUnavailableException("Stores service is unavailable");
+      }
+      throw new ServiceUnavailableException("Stores service is unavailable");
+    }
+
     const [createdGiftcard] = await this.databaseService.db
       .insert(giftcards)
       .values({
