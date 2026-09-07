@@ -12,6 +12,7 @@ import {
 import { GiftcardsService } from "./giftcards.service";
 import { CreateGiftcardDto } from "./dto/create-giftcard.dto";
 import { SpendGiftcardDto } from "./dto/spend-giftcard.dto";
+import { ListGiftcardsDto } from "./dto/list-giftcards.dto";
 
 @Controller("giftcards")
 export class GiftcardsController {
@@ -23,11 +24,8 @@ export class GiftcardsController {
   }
 
   @Get()
-  findAll(@Query("userEmail") userEmail?: string) {
-    if (userEmail) {
-      return this.giftcardsService.findByUserEmail(userEmail);
-    }
-    return this.giftcardsService.findAll();
+  findAll(@Query() query: ListGiftcardsDto) {
+    return this.giftcardsService.findAll(query);
   }
 
   @Get(":id")
