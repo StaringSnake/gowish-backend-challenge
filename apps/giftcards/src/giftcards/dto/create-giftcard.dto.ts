@@ -3,12 +3,16 @@ import {
   IsNumber,
   IsOptional,
   IsPositive,
+  IsInt,
   IsDateString,
+  Max,
 } from "class-validator";
 
 export class CreateGiftcardDto {
   @IsNumber()
   @IsPositive()
+  @IsInt()
+  @Max(Number.MAX_SAFE_INTEGER)
   amount: number;
 
   @IsString()
