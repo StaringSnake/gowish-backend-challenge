@@ -1,8 +1,9 @@
 import { ValidationPipe } from "@nestjs/common";
 import { NestFactory } from "@nestjs/core";
 import { AppModule } from "./app.module";
+import { setupGiftcardsSwagger } from "./swagger";
 
-async function bootstrap() {
+export async function bootstrap() {
   const app = await NestFactory.create(AppModule);
   app.useGlobalPipes(new ValidationPipe({ transform: true, whitelist: true }));
 
@@ -11,6 +12,7 @@ async function bootstrap() {
 
   // Global prefix for API routes
   app.setGlobalPrefix("api");
+  setupGiftcardsSwagger(app);
 
   await app.listen(3000);
   console.log("app is running on port 3000");

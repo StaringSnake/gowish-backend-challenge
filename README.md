@@ -17,6 +17,26 @@ Run both services with `npm run start:dev`; Giftcards listens on port 3000 and
 Stores on port 3001. Individual commands are `npm run start:dev:giftcards` and
 `npm run start:dev:stores`.
 
+### OpenAPI documentation
+
+With both services running, interactive Swagger UIs are available at:
+
+- Giftcards: http://localhost:3000/api/docs
+- Stores: http://localhost:3001/api/docs
+
+Stable OpenAPI JSON documents are available at `/api/docs-json`:
+
+- Giftcards: http://localhost:3000/api/docs-json
+- Stores: http://localhost:3001/api/docs-json
+
+The documents describe integer-cent amounts, giftcard pagination defaults and
+maximums, spending and summary responses, store-validation errors, and Stores
+CRUD request bodies. They are enabled in the current development/challenge
+setup and do not add authentication requirements. Documentation is disabled
+automatically when `NODE_ENV=production`; set `ENABLE_API_DOCS=true` only when
+production exposure is explicitly intended. `ENABLE_API_DOCS=false` disables it
+in any environment.
+
 ## API
 
 All routes use the `/api` prefix. Monetary amounts are positive safe integer
