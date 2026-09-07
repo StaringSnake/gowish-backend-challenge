@@ -307,4 +307,115 @@ describe("GiftcardsService spending", () => {
       ),
     ).rejects.toThrow();
   });
+
+  it("returns an empty summary when there are no giftcards", async () => {
+    await expect(service.summary()).resolves.toEqual({
+      totalExpiredCards: 0,
+      totalActiveCards: 0,
+      byStore: {},
+    });
+  });
+
+  it("aggregates remaining balances and expiration counts by store", async () => {
+    const expiredId = await createGiftcard(1000, "2020-01-01T00:00:00.000Z");
+    await database.db.insert(giftcards).values({
+      amount: 2500,
+      description: "Active",
+      storeId: "store-2",
+      receriverEmail: "active@example.com",
+      expiresAt: "2999-01-01T00:00:00.000Z",
+    });
+    await database.db.insert(giftcards).values({
+      amount: 500,
+      description: "Never expires",
+      storeId: "store-1",
+      receriverEmail: "never@example.com",
+      expiresAt: null,
+    });
+    await database.db.insert(spendsLog).values({
+      giftcardId: expiredId,
+      amount: 300,
+    });
+
+    await expect(service.summary()).resolves.toEqual({
+      totalExpiredCards: 1,
+      totalActiveCards: 2,
+      byStore: {
+        "store-1": {
+          totalAmountCents: 1200,
+          totalExpiredCards: 1,
+          totalActiveCards: 1,
+        },
+        "store-2": {
+          totalAmountCents: 2500,
+          totalExpiredCards: 0,
+          totalActiveCards: 1,
+        },
+      },
+    });
+  });
+
+  it("rejects invalid persisted expiration timestamps", async () => {
+    await createGiftcard(1000, "not-a-timestamp");
+
+    await expect(service.summary()).rejects.toMatchObject({ status: 400 });
+  });
+
+  it("serializes a persisted __proto__ store id as an ordinary response key", async () => {
+    await database.db.insert(giftcards).values({
+      amount: 100,
+      description: "Special key",
+      storeId: "__proto__",
+      receriverEmail: "special@example.com",
+      expiresAt: null,
+    });
+
+    const summary = await service.summary();
+
+    expect(
+      Object.prototype.hasOwnProperty.call(summary.byStore, "__proto__"),
+    ).toBe(true);
+    expect(JSON.parse(JSON.stringify(summary)).byStore["__proto__"]).toEqual({
+      totalAmountCents: 100,
+      totalExpiredCards: 0,
+      totalActiveCards: 1,
+    });
+  });
+
+  it("treats an expiration equal to the evaluation time as active", async () => {
+    const evaluationTime = new Date("2030-01-01T00:00:00.000Z");
+    await createGiftcard(1000, evaluationTime.toISOString());
+
+    await expect(service.summary(evaluationTime)).resolves.toMatchObject({
+      totalExpiredCards: 0,
+      totalActiveCards: 1,
+    });
+  });
+
+  it("rejects a per-store total that exceeds safe integer precision", async () => {
+    await createGiftcard(Number.MAX_SAFE_INTEGER);
+    await createGiftcard(Number.MAX_SAFE_INTEGER);
+
+    await expect(service.summary()).rejects.toMatchObject({ status: 500 });
+  });
+
+  it("maps aggregate query failures to a stable 500 without database details", async () => {
+    const selectSpy = jest
+      .spyOn(database.db, "select")
+      .mockImplementation(() => {
+        throw new Error("SQLITE integer overflow: internal database detail");
+      });
+
+    try {
+      await expect(service.summary()).rejects.toMatchObject({
+        status: 500,
+        response: {
+          statusCode: 500,
+          message: "Giftcard summary cannot be represented safely",
+        },
+      });
+    } finally {
+      selectSpy.mockRestore();
+    }
+  });
 });

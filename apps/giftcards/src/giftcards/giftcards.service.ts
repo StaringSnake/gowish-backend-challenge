@@ -25,6 +25,18 @@ export type GiftcardListResponse = {
   data: GiftcardResponse[];
   meta: { total: number; page: number; limit: number; totalPages: number };
 };
+export type GiftcardSummary = {
+  totalExpiredCards: number;
+  totalActiveCards: number;
+  byStore: Record<
+    string,
+    {
+      totalAmountCents: number;
+      totalExpiredCards: number;
+      totalActiveCards: number;
+    }
+  >;
+};
 
 const giftcardFields = {
   id: giftcards.id,
@@ -127,6 +139,98 @@ export class GiftcardsService {
       throw new NotFoundException(`Giftcard with ID ${id} not found`);
     }
     return giftcard;
+  }
+
+  async summary(evaluationTime = new Date()): Promise<GiftcardSummary> {
+    let rows;
+    try {
+      const spendTotals = this.databaseService.db
+        .select({
+          giftcardId: spendsLog.giftcardId,
+          spent: sql<number>`sum(${spendsLog.amount})`.as("spent"),
+        })
+        .from(spendsLog)
+        .groupBy(spendsLog.giftcardId)
+        .as("spend_totals");
+      rows = await this.databaseService.db
+        .select({
+          storeId: giftcards.storeId,
+          totalAmountCents: sql<number>`sum(
+            ${giftcards.amount} - coalesce(${spendTotals.spent}, 0)
+          )`,
+          maxSpentCents: sql<number>`coalesce(max(${spendTotals.spent}), 0)`,
+          totalExpiredCards: sql<number>`sum(
+            case when ${giftcards.expiresAt} is not null
+              and julianday(${giftcards.expiresAt}) is not null
+              and julianday(${giftcards.expiresAt}) < julianday(${evaluationTime.toISOString()})
+            then 1 else 0 end
+          )`,
+          totalActiveCards: sql<number>`sum(
+            case when ${giftcards.expiresAt} is null
+              or julianday(${giftcards.expiresAt}) >= julianday(${evaluationTime.toISOString()})
+            then 1 else 0 end
+          )`,
+          invalidExpirationCount: sql<number>`sum(
+            case when ${giftcards.expiresAt} is not null
+              and julianday(${giftcards.expiresAt}) is null
+            then 1 else 0 end
+          )`,
+        })
+        .from(giftcards)
+        .leftJoin(spendTotals, eq(giftcards.id, spendTotals.giftcardId))
+        .groupBy(giftcards.storeId);
+    } catch {
+      throw new InternalServerErrorException(
+        "Giftcard summary cannot be represented safely",
+      );
+    }
+
+    if (rows.some((row) => row.invalidExpirationCount > 0)) {
+      throw new BadRequestException("Giftcard expiration is invalid");
+    }
+
+    const byStore = Object.create(null) as GiftcardSummary["byStore"];
+    let totalExpiredCards = 0;
+    let totalActiveCards = 0;
+    for (const row of rows) {
+      if (
+        !Number.isSafeInteger(row.totalAmountCents) ||
+        row.totalAmountCents < 0 ||
+        !Number.isSafeInteger(row.maxSpentCents) ||
+        row.maxSpentCents < 0 ||
+        !Number.isSafeInteger(row.totalExpiredCards) ||
+        row.totalExpiredCards < 0 ||
+        !Number.isSafeInteger(row.totalActiveCards) ||
+        row.totalActiveCards < 0 ||
+        !Number.isSafeInteger(row.invalidExpirationCount) ||
+        row.invalidExpirationCount < 0
+      ) {
+        throw new InternalServerErrorException(
+          "Giftcard summary cannot be represented safely",
+        );
+      }
+      byStore[row.storeId] = {
+        totalAmountCents: row.totalAmountCents,
+        totalExpiredCards: row.totalExpiredCards,
+        totalActiveCards: row.totalActiveCards,
+      };
+      totalExpiredCards += row.totalExpiredCards;
+      totalActiveCards += row.totalActiveCards;
+      if (
+        !Number.isSafeInteger(totalExpiredCards) ||
+        !Number.isSafeInteger(totalActiveCards)
+      ) {
+        throw new InternalServerErrorException(
+          "Giftcard summary cannot be represented safely",
+        );
+      }
+    }
+
+    return {
+      totalExpiredCards,
+      totalActiveCards,
+      byStore,
+    };
   }
 
   async spend(id: number, amount: number): Promise<GiftcardResponse> {
